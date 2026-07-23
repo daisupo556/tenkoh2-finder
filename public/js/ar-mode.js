@@ -2,12 +2,18 @@
    ar-mode.js — ARファインダーモード制御
    背面カメラ映像の上に、コンパス/ジャイロから計算した
    衛星のいる方向を重ねて表示する。
+
+   方位角・仰角 → 画面座標の変換は、東西南北上のベクトルによる
+   本格的な透視投影(ピンホールカメラモデル)で行う。単純な
+   「方位角の差を横方向のpxに変換」という近似は、天頂(仰角90°)
+   付近で方位角自体が定義不能に近づくため破綻し、天頂を向けた
+   瞬間に軌道が消えるという不具合の原因になっていた。
    ========================================================== */
 
 const ARMode = (function() {
   let stream = null;
   let currentHeading = 0;  // 0-360, 真北基準の想定 (磁北からの偏角補正は未実装)
-  let currentPitch = 0;    // 0=水平線, 90=天頂
+  let currentPitch = 0;    // -90=真下, 0=水平線, 90=天頂
   let targetAzimuth = 0;
   let targetElevation = 0;
 
@@ -27,7 +33,6 @@ const ARMode = (function() {
     if (event.beta !== null) {
       // beta: 0=画面上向きに水平, 90=画面を立てて構えた状態(=カメラは水平線を向く)
       // 実機検証の結果、90を基準に上下が逆だったため beta-90 に修正
-      // (スマホを上に傾けるほど currentPitch が増える = 表示も正しく下に動く)
       currentPitch = event.beta - 90;
     }
   }
@@ -87,21 +92,59 @@ const ARMode = (function() {
     }
   }
 
-  // 画面外に出た点を追跡する際、これ以上離れた点は線を繋がず切る (角度)
-  const MAX_TRACK_ANGLE = ASSUMED_FOV_H * 1.5;
+  // ---- ベクトル演算ヘルパー ----
+  function toVector(azDeg, elDeg) {
+    const az = azDeg * Math.PI / 180, el = elDeg * Math.PI / 180;
+    return {
+      x: Math.cos(el) * Math.sin(az), // 東
+      y: Math.cos(el) * Math.cos(az), // 北
+      z: Math.sin(el)                 // 上
+    };
+  }
+  function dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+  function cross(a, b) {
+    return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x };
+  }
+  function normalize(v) {
+    const m = Math.sqrt(dot(v, v));
+    if (!m) return { x: 0, y: 0, z: 0 };
+    return { x: v.x / m, y: v.y / m, z: v.z / m };
+  }
 
   /**
-   * 方位角・仰角 → 現在の向きを基準にした画面座標に変換
+   * 方位角・仰角 → 現在のカメラの向きを基準にした透視投影
+   * (ピンホールカメラモデル。天頂付近でも破綻しない)
    */
   function project(az, el, w, h) {
-    let diffAz = az - currentHeading;
-    diffAz = (diffAz + 180 + 360) % 360 - 180;
-    const diffEl = el - currentPitch;
-    const fovV = ASSUMED_FOV_H * (h / w);
-    const x = w / 2 + diffAz * (w / ASSUMED_FOV_H);
-    const y = h / 2 - diffEl * (h / fovV);
-    const withinFov = Math.abs(diffAz) <= ASSUMED_FOV_H / 2 && Math.abs(diffEl) <= fovV / 2;
-    return { x, y, diffAz, diffEl, withinFov };
+    const target = toVector(az, el);
+    const forward = toVector(currentHeading, currentPitch);
+    const worldUp = { x: 0, y: 0, z: 1 };
+
+    let right = normalize(cross(forward, worldUp));
+    if (right.x === 0 && right.y === 0 && right.z === 0) {
+      // forwardがほぼ真上/真下向きだとworldUpと平行になり破綻するため、
+      // その場合はコンパス方位から直接「右」ベクトルを作る
+      const hRad = currentHeading * Math.PI / 180;
+      right = { x: Math.cos(hRad), y: -Math.sin(hRad), z: 0 };
+    }
+    const up = cross(right, forward);
+
+    const fwdComp = dot(target, forward);
+    const rightComp = dot(target, right);
+    const upComp = dot(target, up);
+
+    const focalPx = (w / 2) / Math.tan((ASSUMED_FOV_H * Math.PI / 180) / 2);
+    const angleFromCenterDeg = Math.acos(Math.max(-1, Math.min(1, fwdComp))) * 180 / Math.PI;
+
+    const inFront = fwdComp > 0.05; // 前方おおよそ87°以内
+    const x = inFront ? w / 2 + focalPx * (rightComp / fwdComp) : null;
+    const y = inFront ? h / 2 - focalPx * (upComp / fwdComp) : null;
+    const withinFov = inFront && x >= 0 && x <= w && y >= 0 && y <= h;
+
+    // 画面のどちら方向にあるか (視野外インジケーター配置用。前方/後方に関わらず常に有効)
+    const viewAngle = Math.atan2(upComp, rightComp);
+
+    return { x, y, inFront, withinFov, angleFromCenterDeg, viewAngle };
   }
 
   /**
@@ -138,8 +181,6 @@ const ARMode = (function() {
 
     // --- 軌道ライン + 時刻ドットの描画 ---
     if (passTrack && passTrack.length >= 2) {
-      const now = Date.now();
-
       // 実カメラ映像の上でも視認できるよう、太め+グロー付きで描画
       ctx.save();
       ctx.lineWidth = 5;
@@ -152,16 +193,17 @@ const ARMode = (function() {
       let penDown = false;
       for (let i = 0; i < passTrack.length; i++) {
         const pt = project(passTrack[i].azimuth, passTrack[i].elevation, w, h);
-        const tooFar = Math.abs(pt.diffAz) > MAX_TRACK_ANGLE || Math.abs(pt.diffEl) > MAX_TRACK_ANGLE;
-        if (tooFar) { penDown = false; continue; }
+        // 前方87°を超える(≒真横〜後方)点だけ線を切る。天頂通過そのものでは切らない。
+        if (!pt.inFront) { penDown = false; continue; }
         if (!penDown) { ctx.moveTo(pt.x, pt.y); penDown = true; }
         else { ctx.lineTo(pt.x, pt.y); }
       }
       ctx.stroke();
       ctx.restore();
 
-      // 通過点ドット (約1分間隔) + 数分おきに経過時刻ラベル
+      // 通過点ドット (約1分間隔) + 数分おきに時刻ラベル (HH:MM)
       let lastDotMin = null;
+      const now = Date.now();
       passTrack.forEach((p) => {
         const minFromNow = Math.round((p.time.getTime() - now) / 60000);
         if (lastDotMin !== null && minFromNow === lastDotMin) return;
@@ -179,9 +221,9 @@ const ARMode = (function() {
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // 2分おきに「+N分」ラベルを表示 (0=現在時刻は現在位置マーカー側に任せて省く)
-        if (minFromNow % 2 === 0 && minFromNow !== 0) {
-          const label = (minFromNow > 0 ? '+' : '') + minFromNow + '分';
+        // 2分おきに時刻(時:分)ラベルを表示
+        if (minFromNow % 2 === 0) {
+          const label = p.time.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false });
           ctx.font = 'bold 13px system-ui, sans-serif';
           const tw = ctx.measureText(label).width;
           const lx = pt.x + 10, ly = pt.y - 10;
@@ -219,20 +261,21 @@ const ARMode = (function() {
 
     // --- 現在位置の点を描画 (視野内=実位置 / 視野外=画面端ににじませる) ---
     const cur = project(targetAzimuth, targetElevation, w, h);
-    const isLocked = Math.abs(cur.diffAz) <= TOLERANCE_DEG && Math.abs(cur.diffEl) <= TOLERANCE_DEG;
+    const isLocked = cur.angleFromCenterDeg <= TOLERANCE_DEG;
     const dotColor = isLocked ? '34, 197, 94' : '0, 209, 255'; // ok緑 / accentシアン (RGB)
 
     if (cur.withinFov) {
       drawGlowDot(ctx, cur.x, cur.y, 12, dotColor, 1);
     } else {
-      // 画面中心から現在位置方向への直線と、画面端(少し内側)との交点を求めて滲ませる
+      // 画面中心から見た方向角(viewAngle)を使って、画面端(少し内側)との交点を求めて滲ませる。
+      // 透視投影の座標(x,y)は視野の反対側(後方)では発散するため使わず、角度だけを使う。
       const margin = 26;
-      const cx = w / 2, cy = h / 2;
-      const dx = cur.x - cx, dy = cur.y - cy;
-      const scaleX = dx !== 0 ? (w / 2 - margin) / Math.abs(dx) : Infinity;
-      const scaleY = dy !== 0 ? (h / 2 - margin) / Math.abs(dy) : Infinity;
-      const scale = Math.max(0, Math.min(scaleX, scaleY));
-      const ex = cx + dx * scale, ey = cy + dy * scale;
+      const halfW = w / 2 - margin, halfH = h / 2 - margin;
+      const dirX = Math.cos(cur.viewAngle), dirY = -Math.sin(cur.viewAngle);
+      const scaleX = dirX !== 0 ? halfW / Math.abs(dirX) : Infinity;
+      const scaleY = dirY !== 0 ? halfH / Math.abs(dirY) : Infinity;
+      const scale = Math.min(scaleX, scaleY);
+      const ex = w / 2 + dirX * scale, ey = h / 2 + dirY * scale;
       drawGlowDot(ctx, ex, ey, 16, dotColor, 0.55);
     }
 
