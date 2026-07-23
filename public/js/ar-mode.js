@@ -5,81 +5,35 @@
 
    方位角・仰角 → 画面座標の変換は、東西南北上のベクトルによる
    本格的な透視投影(ピンホールカメラモデル)で行う。単純な
-   「方位角の差を横方向のpxに変換」という近似は天頂付近で破綻する。
-
-   また、スマホの傾き(ロール/gamma)を無視すると、まっすぐ構えて
-   いるつもりでも実際は少し傾いているため軌道線が実際の空とズレて
-   見える("ドリフトする")原因になるため、ロール補正とセンサー値の
-   平滑化(急なブレを抑える)を行っている。
+   「方位角の差を横方向のpxに変換」という近似は、天頂(仰角90°)
+   付近で方位角自体が定義不能に近づくため破綻し、天頂を向けた
+   瞬間に軌道が消えるという不具合の原因になっていた。
    ========================================================== */
 
 const ARMode = (function() {
   let stream = null;
-
-  // 平滑化後の値 (実際に描画に使う)
   let currentHeading = 0;  // 0-360, 真北基準の想定 (磁北からの偏角補正は未実装)
   let currentPitch = 0;    // -90=真下, 0=水平線, 90=天頂
-  let currentRoll = 0;     // スマホの傾き(左右のロール)
-  let hasOrientationData = false;
-
   let targetAzimuth = 0;
   let targetElevation = 0;
 
-  const TOLERANCE_DEG = 15;    // 4エレ八木の指向性を踏まえた許容誤差
-  const AIM_TIME_MAX_DEG = 20; // この角度以内に軌道があれば「今向けている場所の時刻」を表示
-  const ASSUMED_FOV_H = 65;    // 背面カメラの想定水平画角(度)。実機によって前後する概算値
-  const SMOOTH_FACTOR = 0.4;   // センサー値の平滑化係数 (小さいほど滑らかだが反応が遅れて「固定されていない」ように感じやすい)
-
-  // スマホを垂直に構えた姿勢(beta≈90°)は、alpha/beta/gammaという3つの角度で
-  // 向きを表す方式の数学的な特異点に近く、特にgamma(ロール)が実際には
-  // ほとんど動いていなくても瞬間的に大きく暴れることがある(ジンバルロックに近い現象)。
-  // これがそのまま回転補正に使われると、画面全体が一瞬でぐるっと回転して見える。
-  // 1フレームでの変化量が非現実的に大きい場合はセンサーノイズとみなして無視する。
-  const MAX_JUMP_PER_EVENT_DEG = 20;
-
-  /**
-   * 角度(0-360, 周回あり)の平滑化。359°→1°のような跨ぎを正しく扱う
-   */
-  function smoothAngle(current, target, factor) {
-    let diff = target - current;
-    diff = (diff + 180 + 360) % 360 - 180;
-    return (current + diff * factor + 360) % 360;
-  }
+  const TOLERANCE_DEG = 15;   // 4エレ八木の指向性を踏まえた許容誤差
+  const ASSUMED_FOV_H = 65;   // 背面カメラの想定水平画角(度)。実機によって前後する概算値
 
   /**
    * センサーの向きを取得
    */
   function handleOrientation(event) {
-    let rawHeading = currentHeading;
     if (event.webkitCompassHeading !== undefined) {
-      rawHeading = event.webkitCompassHeading;
+      currentHeading = event.webkitCompassHeading;
     } else if (event.alpha !== null) {
-      rawHeading = (360 - event.alpha) % 360;
-    }
-    // beta: 0=画面上向きに水平, 90=画面を立てて構えた状態(=カメラは水平線を向く)
-    // 実機検証の結果、90を基準に上下が逆だったため beta-90 に変換
-    const rawPitch = (event.beta !== null) ? event.beta - 90 : currentPitch;
-    // gamma: スマホの左右の傾き(ロール)。構えた時にまっすぐでないと軌道全体がズレて見えるため補正に使う
-    const rawRoll = (event.gamma !== null) ? event.gamma : currentRoll;
-
-    if (!hasOrientationData) {
-      currentHeading = rawHeading;
-      currentPitch = rawPitch;
-      currentRoll = rawRoll;
-      hasOrientationData = true;
-      return;
+      currentHeading = (360 - event.alpha) % 360;
     }
 
-    let headingDiff = rawHeading - currentHeading;
-    headingDiff = (headingDiff + 180 + 360) % 360 - 180;
-    if (Math.abs(headingDiff) < MAX_JUMP_PER_EVENT_DEG) {
-      currentHeading = smoothAngle(currentHeading, rawHeading, SMOOTH_FACTOR);
-    }
-    if (Math.abs(rawPitch - currentPitch) < MAX_JUMP_PER_EVENT_DEG) {
-      currentPitch += (rawPitch - currentPitch) * SMOOTH_FACTOR;
-    }
-    if (Math.abs(rawRoll - currentRoll) < MAX_JUMP_PER_EVENT_DEG) {
-      currentRoll += (rawRoll - currentRoll) * SMOOTH_FACTOR;
+    if (event.beta !== null) {
+      // beta: 0=画面上向きに水平, 90=画面を立てて構えた状態(=カメラは水平線を向く)
+      // 実機検証の結果、90を基準に上下が逆だったため beta-90 に修正
+      currentPitch = event.beta - 90;
     }
   }
 
@@ -97,22 +51,6 @@ const ARMode = (function() {
   /**
    * モーションセンサーの利用を要求する (iOSは明示的な許可が必要)
    */
-  /**
-   * 'deviceorientationabsolute' が使える環境(主にAndroid Chrome)ではそちらを優先する。
-   * 通常の 'deviceorientation' は、ブラウザによっては真北基準ではなく
-   * 「起動時のスマホの向き」基準の相対角度しか返さないことがあり、
-   * その場合はコンパスとして根本的に信頼できない値になってしまう。
-   * 'deviceorientationabsolute' (またはiOSのwebkitCompassHeading)は
-   * 真北基準であることが保証されている。
-   */
-  function attachOrientationListener() {
-    if ('ondeviceorientationabsolute' in window) {
-      window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation, true);
-    }
-  }
-
   function requestOrientationPermission() {
     return new Promise((resolve, reject) => {
       if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -120,7 +58,7 @@ const ARMode = (function() {
         DeviceOrientationEvent.requestPermission()
           .then((state) => {
             if (state === 'granted') {
-              attachOrientationListener();
+              window.addEventListener('deviceorientation', handleOrientation, true);
               resolve();
             } else {
               reject(new Error('センサーの利用が許可されませんでした'));
@@ -129,7 +67,7 @@ const ARMode = (function() {
           .catch(reject);
       } else {
         // iOS以外は許可プロンプト不要でそのまま使える
-        attachOrientationListener();
+        window.addEventListener('deviceorientation', handleOrientation, true);
         resolve();
       }
     });
@@ -174,11 +112,11 @@ const ARMode = (function() {
   }
 
   /**
-   * 現在のセンサー値から、カメラのforward/right/up基底ベクトルを作る。
-   * ロール(gamma)分だけforward軸まわりにright/upを回転させることで、
-   * 「スマホがまっすぐ構えられていない」ズレを補正する。
+   * 方位角・仰角 → 現在のカメラの向きを基準にした透視投影
+   * (ピンホールカメラモデル。天頂付近でも破綻しない)
    */
-  function computeCameraBasis() {
+  function project(az, el, w, h) {
+    const target = toVector(az, el);
     const forward = toVector(currentHeading, currentPitch);
     const worldUp = { x: 0, y: 0, z: 1 };
 
@@ -191,29 +129,9 @@ const ARMode = (function() {
     }
     const up = cross(right, forward);
 
-    const rollRad = -currentRoll * Math.PI / 180;
-    const cosR = Math.cos(rollRad), sinR = Math.sin(rollRad);
-    const rightR = {
-      x: right.x * cosR + up.x * sinR,
-      y: right.y * cosR + up.y * sinR,
-      z: right.z * cosR + up.z * sinR
-    };
-    const upR = {
-      x: up.x * cosR - right.x * sinR,
-      y: up.y * cosR - right.y * sinR,
-      z: up.z * cosR - right.z * sinR
-    };
-    return { forward, right: rightR, up: upR };
-  }
-
-  /**
-   * 方位角・仰角 → 画面座標への透視投影 (ピンホールカメラモデル)
-   */
-  function project(az, el, basis, w, h) {
-    const target = toVector(az, el);
-    const fwdComp = dot(target, basis.forward);
-    const rightComp = dot(target, basis.right);
-    const upComp = dot(target, basis.up);
+    const fwdComp = dot(target, forward);
+    const rightComp = dot(target, right);
+    const upComp = dot(target, up);
 
     const focalPx = (w / 2) / Math.tan((ASSUMED_FOV_H * Math.PI / 180) / 2);
     const angleFromCenterDeg = Math.acos(Math.max(-1, Math.min(1, fwdComp))) * 180 / Math.PI;
@@ -227,63 +145,6 @@ const ARMode = (function() {
     const viewAngle = Math.atan2(upComp, rightComp);
 
     return { x, y, inFront, withinFov, angleFromCenterDeg, viewAngle };
-  }
-
-  /**
-   * 通過軌跡の中で、いま向けている方向にもっとも近い点を探す
-   */
-  function findNearestTrackPoint(passTrack, basis) {
-    let best = null, bestDot = -Infinity;
-    for (let i = 0; i < passTrack.length; i++) {
-      const v = toVector(passTrack[i].azimuth, passTrack[i].elevation);
-      const d = dot(v, basis.forward);
-      if (d > bestDot) { bestDot = d; best = passTrack[i]; }
-    }
-    if (!best) return null;
-    const angleDeg = Math.acos(Math.max(-1, Math.min(1, bestDot))) * 180 / Math.PI;
-    return { point: best, angleDeg };
-  }
-
-  /**
-   * 画面上部の方位磁針テープを描く (現在向いている方位を中心に、周辺の方位を並べる)
-   */
-  function drawCompassTape(ctx, w, topOffset) {
-    const dirs = [
-      ['N', 0], ['NE', 45], ['E', 90], ['SE', 135],
-      ['S', 180], ['SW', 225], ['W', 270], ['NW', 315]
-    ];
-    const y = topOffset + 34;
-    const pxPerDeg = w / ASSUMED_FOV_H;
-
-    ctx.save();
-    ctx.font = 'bold 13px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    for (const [label, deg] of dirs) {
-      for (const wrap of [-360, 0, 360]) {
-        let diff = (deg + wrap) - currentHeading;
-        if (Math.abs(diff) > ASSUMED_FOV_H) continue;
-        const x = w / 2 + diff * pxPerDeg;
-        ctx.fillStyle = 'rgba(200, 240, 255, 0.55)';
-        ctx.fillRect(x - 0.75, y - 6, 1.5, 12);
-        ctx.fillStyle = 'rgba(220, 245, 255, 0.9)';
-        ctx.fillText(label, x, y - 14);
-      }
-    }
-
-    // 中心の現在方位マーカー
-    ctx.fillStyle = 'var(--accent, #00d1ff)';
-    ctx.beginPath();
-    ctx.moveTo(w / 2, y + 12);
-    ctx.lineTo(w / 2 - 6, y + 2);
-    ctx.lineTo(w / 2 + 6, y + 2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 14px system-ui, sans-serif';
-    ctx.fillText(Math.round(currentHeading) + '°', w / 2, y - 26);
-    ctx.restore();
   }
 
   /**
@@ -307,26 +168,20 @@ const ARMode = (function() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    const basis = computeCameraBasis();
-    const topInfoEl = els.guideText && els.guideText.closest('.ar-top-info');
-    const topOffset = topInfoEl ? topInfoEl.getBoundingClientRect().bottom : 90;
-    drawCompassTape(ctx, w, topOffset);
-
     if (!hasObserverCoords) {
       els.guideText.textContent = '📍 位置情報を取得できていません';
       if (els.reticle) els.reticle.classList.remove('--locked');
-      if (els.aimTime) els.aimTime.classList.remove('--show');
       return;
     }
     if (!hasSatrec) {
       els.guideText.textContent = '🛰️ TLE衛星データを取得中...';
       if (els.reticle) els.reticle.classList.remove('--locked');
-      if (els.aimTime) els.aimTime.classList.remove('--show');
       return;
     }
 
-    // --- 軌道ライン + 通過点ドットの描画 ---
+    // --- 軌道ライン + 時刻ドットの描画 ---
     if (passTrack && passTrack.length >= 2) {
+      // 実カメラ映像の上でも視認できるよう、太め+グロー付きで描画
       ctx.save();
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';
@@ -337,7 +192,8 @@ const ARMode = (function() {
       ctx.beginPath();
       let penDown = false;
       for (let i = 0; i < passTrack.length; i++) {
-        const pt = project(passTrack[i].azimuth, passTrack[i].elevation, basis, w, h);
+        const pt = project(passTrack[i].azimuth, passTrack[i].elevation, w, h);
+        // 前方87°を超える(≒真横〜後方)点だけ線を切る。天頂通過そのものでは切らない。
         if (!pt.inFront) { penDown = false; continue; }
         if (!penDown) { ctx.moveTo(pt.x, pt.y); penDown = true; }
         else { ctx.lineTo(pt.x, pt.y); }
@@ -345,46 +201,39 @@ const ARMode = (function() {
       ctx.stroke();
       ctx.restore();
 
+      // 通過点ドット (約1分間隔) + 数分おきに時刻ラベル (HH:MM)
       let lastDotMin = null;
-      const nowMs = Date.now();
+      const now = Date.now();
       passTrack.forEach((p) => {
-        const minFromNow = Math.round((p.time.getTime() - nowMs) / 60000);
+        const minFromNow = Math.round((p.time.getTime() - now) / 60000);
         if (lastDotMin !== null && minFromNow === lastDotMin) return;
         lastDotMin = minFromNow;
-        const pt = project(p.azimuth, p.elevation, basis, w, h);
+        const pt = project(p.azimuth, p.elevation, w, h);
         if (!pt.withinFov) return;
+
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(10, 18, 24, 0.85)';
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(86, 214, 255, 0.9)';
         ctx.lineWidth = 2;
         ctx.stroke();
-      });
 
-      // いま向けている場所にもっとも近い軌道上の点 → その時刻を表示
-      const nearest = findNearestTrackPoint(passTrack, basis);
-      if (nearest && nearest.angleDeg <= AIM_TIME_MAX_DEG) {
-        const pt = project(nearest.point.azimuth, nearest.point.elevation, basis, w, h);
-        if (pt.withinFov) {
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, 9, 0, Math.PI * 2);
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-          ctx.lineWidth = 2.5;
-          ctx.stroke();
+        // 2分おきに時刻(時:分)ラベルを表示
+        if (minFromNow % 2 === 0) {
+          const label = p.time.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false });
+          ctx.font = 'bold 13px system-ui, sans-serif';
+          const tw = ctx.measureText(label).width;
+          const lx = pt.x + 10, ly = pt.y - 10;
+          ctx.fillStyle = 'rgba(10, 18, 24, 0.75)';
+          ctx.fillRect(lx - 3, ly - 13, tw + 6, 17);
+          ctx.fillStyle = 'rgba(200, 240, 255, 0.95)';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, lx, ly - 4);
         }
-        if (els.aimTime) {
-          const timeLabel = nearest.point.time.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false });
-          els.aimTime.textContent = `この方向 → ${timeLabel} ごろ`;
-          els.aimTime.classList.add('--show');
-        }
-      } else if (els.aimTime) {
-        els.aimTime.classList.remove('--show');
-      }
-    } else if (els.aimTime) {
-      els.aimTime.classList.remove('--show');
+      });
     }
 
     if (!lookAngles) {
@@ -410,8 +259,8 @@ const ARMode = (function() {
     const dir = (typeof ObserverManager !== 'undefined') ? ObserverManager.getCompassDirection(targetAzimuth) : '';
     els.guideText.textContent = `【${dir}】の空を見上げて下さい (仰角 ${targetElevation.toFixed(0)}°)`;
 
-    // --- 現在の衛星位置の点を描画 (視野内=実位置 / 視野外=画面端ににじませる) ---
-    const cur = project(targetAzimuth, targetElevation, basis, w, h);
+    // --- 現在位置の点を描画 (視野内=実位置 / 視野外=画面端ににじませる) ---
+    const cur = project(targetAzimuth, targetElevation, w, h);
     const isLocked = cur.angleFromCenterDeg <= TOLERANCE_DEG;
     const dotColor = isLocked ? '34, 197, 94' : '0, 209, 255'; // ok緑 / accentシアン (RGB)
 
