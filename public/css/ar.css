@@ -1,0 +1,457 @@
+/* ==========================================================
+   ar.css — AR探索アプリ 全体レイアウト・AR画面スタイル
+   トーン&マナーは既存Trackerを踏襲 (黒背景/シアンアクセント/ダーク半透明パネル)
+   ========================================================== */
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+}
+
+/* ----------------------------------------------------------
+   開始画面 (許可の説明 + 開始ボタン)
+   ---------------------------------------------------------- */
+.start-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.start-overlay.--hidden { display: none; }
+
+.start-card {
+  max-width: 340px;
+  text-align: center;
+}
+.start-logo {
+  width: 96px;
+  margin: 0 auto 16px;
+  display: block;
+  opacity: 0.9;
+}
+.start-card h1 {
+  font-size: 1.2rem;
+  margin: 0 0 12px;
+  color: var(--fg);
+}
+.start-card p {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+.start-btn {
+  width: 100%;
+  padding: 12px 0;
+  font-size: 1rem;
+}
+.start-error {
+  margin-top: 14px;
+  font-size: 0.78rem;
+  color: var(--error, #ff5a5a);
+  line-height: 1.5;
+  min-height: 1em;
+}
+
+/* ----------------------------------------------------------
+   常時表示: TLE状態バッジ
+   ---------------------------------------------------------- */
+.tle-badge {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  background: #0f141acc;
+  border: 1px solid var(--panelBorder);
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-size: 0.68rem;
+  color: var(--muted);
+  white-space: nowrap;
+  max-width: 92vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.tle-badge.--ok { color: var(--ok, #22c55e); }
+.tle-badge.--fail { color: var(--error, #ff5a5a); }
+
+/* ----------------------------------------------------------
+   上部アイコンナビ (4画面切り替え)
+   ---------------------------------------------------------- */
+.top-nav {
+  position: fixed;
+  top: calc(38px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  gap: 4px;
+  background: #0f141acc;
+  border: 1px solid var(--panelBorder);
+  border-radius: 12px;
+  padding: 4px;
+}
+.top-nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 56px;
+  padding: 6px 0 5px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+.top-nav-btn span {
+  font-size: 0.55rem;
+  letter-spacing: 0.02em;
+}
+.top-nav-btn.--active {
+  color: var(--accent);
+  background: rgba(0, 200, 255, 0.1);
+}
+
+/* ----------------------------------------------------------
+   画面切り替え共通
+   ---------------------------------------------------------- */
+.view-screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+}
+.view-screen.--active {
+  display: block;
+}
+
+.panel-scroll {
+  position: absolute;
+  top: calc(84px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* ----------------------------------------------------------
+   AR画面
+   ---------------------------------------------------------- */
+#view-ar {
+  background: #000;
+}
+#arVideo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+.ar-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ar-guide-text {
+  position: absolute;
+  top: calc(88px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 88vw;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: bold;
+  color: var(--fg);
+  background: rgba(0,0,0,0.55);
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--panelBorder);
+  text-shadow: 0 0 10px rgba(255,255,255,0.2);
+}
+
+.ar-status {
+  position: absolute;
+  top: calc(140px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.ar-reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  border: 1.5px solid rgba(0, 209, 255, 0.5);
+  border-radius: 50%;
+}
+.ar-reticle::before, .ar-reticle::after {
+  content: "";
+  position: absolute;
+  background: rgba(0, 209, 255, 0.5);
+}
+.ar-reticle::before { top: 50%; left: -10px; right: -10px; height: 1px; }
+.ar-reticle::after { left: 50%; top: -10px; bottom: -10px; width: 1px; }
+.ar-reticle.--locked {
+  border-color: var(--ok, #22c55e);
+  box-shadow: 0 0 20px var(--ok, #22c55e);
+  animation: ar-pulse-locked 1.2s infinite alternate;
+}
+@keyframes ar-pulse-locked {
+  from { box-shadow: 0 0 8px rgba(34,197,94,0.4); }
+  to   { box-shadow: 0 0 22px rgba(34,197,94,0.85); }
+}
+
+.ar-marker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  background: rgba(0, 209, 255, 0.25);
+  border: 2px solid #00d1ff;
+  box-shadow: 0 0 14px #00d1ff;
+  display: none;
+}
+.ar-marker::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: #00d1ff;
+}
+.ar-marker.--locked {
+  border-color: var(--ok, #22c55e);
+  box-shadow: 0 0 18px var(--ok, #22c55e);
+}
+.ar-marker.--locked::after { background: var(--ok, #22c55e); }
+
+.ar-edge-arrow {
+  position: absolute;
+  color: var(--accent);
+  font-size: 2rem;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(0,0,0,0.8);
+  opacity: 0;
+}
+.ar-edge-arrow.--show { opacity: 0.9; }
+.ar-edge-arrow.--up    { top: calc(170px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); }
+.ar-edge-arrow.--down  { bottom: calc(110px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
+.ar-edge-arrow.--left  { left: 14px; top: 50%; transform: translateY(-50%); }
+.ar-edge-arrow.--right { right: 14px; top: 50%; transform: translateY(-50%); }
+
+.ar-stat-bar {
+  position: absolute;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 16px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid var(--panelBorder);
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.ar-stat-bar b { color: var(--accent); }
+
+/* ----------------------------------------------------------
+   地球儀画面
+   ---------------------------------------------------------- */
+#view-globe {
+  display: none;
+  place-items: center;
+}
+#view-globe.--active { display: grid; }
+#globe {
+  display: block;
+  background: radial-gradient(ellipse at 50% 45%, #0a0a0a 0%, #000 70%);
+  width: min(94vw, 860px);
+  height: min(94vw, 860px);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 160px);
+  touch-action: none;
+}
+
+/* ----------------------------------------------------------
+   情報画面 (周波数 + 天空 + 方位)
+   ---------------------------------------------------------- */
+.info-section {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--panelBorder);
+}
+.info-section:last-child { border-bottom: none; }
+.info-section-title {
+  font-weight: bold;
+  font-size: 0.85rem;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+.skyplot-wrap-ar {
+  display: flex;
+  justify-content: center;
+}
+
+/* ----------------------------------------------------------
+   レスポンシブ (スマホ縦画面)
+   ---------------------------------------------------------- */
+@media (max-width: 700px), (orientation: portrait) and (max-width: 860px) {
+  .top-nav-btn { width: 50px; }
+}
+
+/* ----------------------------------------------------------
+   既存 panels.css から移植した共通クラス
+   (情報画面・通過予測画面で使用)
+   ---------------------------------------------------------- */
+.panel-title {
+  font-weight: bold;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--panelBorder);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}
+
+.panel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.panel-row:last-child { margin-bottom: 0; }
+
+.ui-input {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--panelBorder);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-family: var(--fontMono);
+  font-size: 0.8rem;
+  width: 100%;
+}
+.ui-input:focus { outline: none; border-color: var(--accent); }
+
+.look-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.visibility-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 0.75rem;
+  text-align: center;
+}
+.visibility-badge.--visible {
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid var(--ok);
+  color: var(--ok);
+}
+.visibility-badge.--invisible {
+  background: rgba(136, 136, 136, 0.1);
+  border: 1px solid var(--muted);
+  color: var(--muted);
+}
+
+.skyplot-canvas {
+  display: block;
+  width: 200px;
+  height: 200px;
+}
+
+.countdown-box {
+  text-align: center;
+  padding: 6px 0;
+  margin-bottom: 8px;
+}
+.countdown-label {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.countdown-value {
+  color: var(--accent);
+  font-size: 1.3rem;
+  font-family: var(--fontMono);
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+}
+
+.pass-list { list-style: none; padding: 0; margin: 0; }
+.pass-item {
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.78rem;
+}
+.pass-item:last-child { border-bottom: none; }
+.pass-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+.pass-time {
+  color: var(--fg);
+  font-family: var(--fontMono);
+  font-size: 0.8rem;
+}
+.pass-maxel { font-weight: bold; font-family: var(--fontMono); }
+.pass-maxel.--high { color: var(--ok); }
+.pass-maxel.--mid  { color: var(--accent); }
+.pass-maxel.--low  { color: var(--muted); }
+.pass-direction { color: var(--muted); font-size: 0.72rem; }
+
+.doppler-large-val {
+  font-size: 1.8rem;
+  font-family: var(--fontMono);
+  color: var(--accent);
+  text-align: center;
+  font-weight: bold;
+  letter-spacing: -0.02em;
+  margin: 6px 0;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 10px rgba(0, 209, 255, 0.4);
+}
+
+.doppler-offset {
+  font-family: var(--fontMono);
+  font-size: 0.95rem;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.doppler-offset.--plus { color: var(--ok); }
+.doppler-offset.--minus { color: #f43f5e; }
+.doppler-offset.--zero { color: var(--muted); }

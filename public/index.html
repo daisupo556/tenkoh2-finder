@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>てんこう2 ファインダー (AR)</title>
+<link rel="stylesheet" href="css/variables.css">
+<link rel="stylesheet" href="css/ui-components.css">
+<link rel="stylesheet" href="css/ar.css">
+</head>
+<body>
+
+<!-- 開始画面: 権限の説明 -->
+<div id="startOverlay" class="start-overlay">
+  <div class="start-card">
+    <img src="assets/logos/TEN-KOH2_tracker_L.svg" class="start-logo" alt="TEN-KOH2">
+    <h1>てんこう2 ファインダー</h1>
+    <p>
+      カメラ映像に衛星の方向を重ねて表示するARモードです。<br>
+      位置情報・カメラ・モーションセンサーの3つの許可が必要です。<br>
+      「開始する」を押すと順番に確認画面が出ます。
+    </p>
+    <button id="btnStart" class="ui-button start-btn">開始する</button>
+    <div id="startError" class="start-error"></div>
+  </div>
+</div>
+
+<!-- 常時表示: TLE取得状況 -->
+<div id="tleStatus" class="tle-badge">TLE取得中…</div>
+
+<!-- 上部アイコンナビ -->
+<nav class="top-nav" aria-label="画面切替">
+  <button class="top-nav-btn --active" data-view="ar" title="AR探索">
+    <span>📡</span><span>AR</span>
+  </button>
+  <button class="top-nav-btn" data-view="globe" title="地球儀">
+    <span>🌐</span><span>地球儀</span>
+  </button>
+  <button class="top-nav-btn" data-view="passes" title="通過予測">
+    <span>🕐</span><span>通過</span>
+  </button>
+  <button class="top-nav-btn" data-view="info" title="周波数・天空・方位">
+    <span>📊</span><span>情報</span>
+  </button>
+</nav>
+
+<!-- AR画面 -->
+<div id="view-ar" class="view-screen --active">
+  <video id="arVideo" autoplay playsinline muted></video>
+  <div class="ar-overlay">
+    <div id="arGuideText" class="ar-guide-text">計算中...</div>
+    <div id="arStatus" class="ar-status">ALIGNING (調整中)</div>
+    <div id="arReticle" class="ar-reticle"></div>
+    <div id="arMarker" class="ar-marker"></div>
+    <div id="arArrowUp" class="ar-edge-arrow --up">▲</div>
+    <div id="arArrowDown" class="ar-edge-arrow --down">▼</div>
+    <div id="arArrowLeft" class="ar-edge-arrow --left">◀</div>
+    <div id="arArrowRight" class="ar-edge-arrow --right">▶</div>
+    <div class="ar-stat-bar">
+      <span>目標 AZ <b id="arTgtAz">--</b>°</span>
+      <span>EL <b id="arTgtEl">--</b>°</span>
+    </div>
+  </div>
+</div>
+
+<!-- 地球儀画面 -->
+<div id="view-globe" class="view-screen">
+  <canvas id="globe" width="900" height="900"></canvas>
+</div>
+
+<!-- 通過予測画面 -->
+<div id="view-passes" class="view-screen">
+  <div class="panel-scroll ui-panel">
+    <div class="panel-title">次の通過予測</div>
+    <div class="countdown-box">
+      <div class="countdown-label">次の通過まで</div>
+      <div id="pass-countdown" class="countdown-value">---</div>
+    </div>
+    <ul id="pass-list" class="pass-list">
+      <li class="pass-item" style="color: var(--muted); text-align: center;">計算中...</li>
+    </ul>
+  </div>
+</div>
+
+<!-- 情報画面: 周波数 + 天空 + 方位 -->
+<div id="view-info" class="view-screen">
+  <div class="panel-scroll ui-panel">
+
+    <div class="info-section">
+      <div class="info-section-title">方位角 / 仰角</div>
+      <div class="look-grid">
+        <div>
+          <div class="ui-label">方位角</div>
+          <div id="look-az" class="ui-value --accent">---</div>
+          <div id="look-dir" class="ui-label" style="font-weight: bold; color: var(--fg);">---</div>
+        </div>
+        <div>
+          <div class="ui-label">仰角</div>
+          <div id="look-el" class="ui-value --accent">---</div>
+        </div>
+        <div>
+          <div class="ui-label">距離</div>
+          <div id="look-rg" class="ui-value">---</div>
+        </div>
+      </div>
+      <div style="text-align: center; margin-top: 4px;">
+        <span id="look-status" class="visibility-badge --invisible">---</span>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">ドップラー周波数予測</div>
+      <div class="panel-row">
+        <span class="ui-label">基準送信周波数 (CW)</span>
+        <span class="ui-value" style="font-size: 0.9rem; font-family: var(--fontMono);">435.8600 MHz</span>
+      </div>
+      <div class="panel-row" style="margin-top: 8px; margin-bottom: 2px;">
+        <span class="ui-label" style="display: block; text-align: center; width: 100%;">予測受信周波数</span>
+      </div>
+      <div id="doppler-rx" class="doppler-large-val">435.8600 MHz</div>
+      <div id="doppler-offset" class="doppler-offset --zero">OFFSET: ±0.00 kHz</div>
+      <div class="panel-row" style="border-top: 1px solid var(--panelBorder); padding-top: 8px; margin-top: 8px;">
+        <span class="ui-label">衛星ステータス</span>
+        <span id="doppler-dir" class="ui-value" style="font-size: 0.85rem; font-weight: bold;">---</span>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title" style="text-align: center;">スカイプロット</div>
+      <div class="skyplot-wrap-ar">
+        <canvas id="skyplot" class="skyplot-canvas" width="400" height="400"></canvas>
+      </div>
+    </div>
+
+    <div class="info-section">
+      <div class="info-section-title">観測地点</div>
+      <div class="panel-row" style="margin-bottom: 6px;">
+        <span class="ui-label">緯度 (Lat)</span>
+        <input type="number" id="obs-lat" class="ui-input" step="0.0001" min="-90" max="90" style="text-align: right; width: 120px;">
+      </div>
+      <div class="panel-row" style="margin-bottom: 10px;">
+        <span class="ui-label">経度 (Lon)</span>
+        <input type="number" id="obs-lon" class="ui-input" step="0.0001" min="-180" max="180" style="text-align: right; width: 120px;">
+      </div>
+      <button id="btn-geolocate" class="ui-button" style="width: 100%;">現在地を再取得</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script src="js/observer.js"></script>
+<script src="js/satellite-calc.js"></script>
+<script src="js/pass-prediction.js"></script>
+<script src="js/sky-plot.js"></script>
+<script src="js/doppler-calc.js"></script>
+<script src="js/ar-mode.js"></script>
+
+<script>
+(async function(){
+  window.__earlyErrors = [];
+  window.addEventListener('error', (e) => window.__earlyErrors.push({message: e.message}));
+  window.addEventListener('unhandledrejection', (e) => window.__earlyErrors.push({message: 'unhandledrejection: ' + (e.reason && (e.reason.message || String(e.reason))), stack: e.reason && String(e.reason.stack)}));
+
+  const statusEl = document.getElementById('tleStatus');
+  const startOverlay = document.getElementById('startOverlay');
+  const startError = document.getElementById('startError');
+  const btnStart = document.getElementById('btnStart');
+
+  let satrec = null;
+  let observerCoords = null;
+  let currentView = 'ar';
+
+  // ---- 観測地点 ----
+  ObserverManager.init();
+  window.addEventListener('observerchange', (e) => { observerCoords = e.detail; });
+
+  document.getElementById('btn-geolocate')?.addEventListener('click', () => {
+    // ObserverManager内蔵ボタンと同じIDを再利用しているが、初期化はinitUI内で行われるため
+    // ここでは何もしない (ObserverManager.init() が既にイベントを紐付け済み)
+  });
+
+  // ---- TLE取得 (このアプリはFirebase Hostingを使わないため CelesTrak 直行) ----
+  function parseTLEText(txt, sourceLabel){
+    const lines = String(txt || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    for(let i=0; i<lines.length-2; i++){
+      const name = lines[i], l1 = lines[i+1], l2 = lines[i+2];
+      if(/^1\s+68261[US ]/.test(l1) && /^2\s+68261\s+/.test(l2)){
+        return { name: name || "TEN-KOH 2", l1, l2, source: sourceLabel };
+      }
+    }
+    for(let i=0; i<lines.length-1; i++){
+      const l1 = lines[i], l2 = lines[i+1];
+      if(/^1\s+68261[US ]/.test(l1) && /^2\s+68261\s+/.test(l2)){
+        return { name: "TEN-KOH 2", l1, l2, source: sourceLabel };
+      }
+    }
+    throw new Error(`TLEではない応答: ${(lines[0]||"empty").slice(0,40)}`);
+  }
+
+  async function fetchTextWithTimeout(url, timeoutMs=8000){
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try{
+      const res = await fetch(url, { cache:"no-store", signal: controller.signal });
+      const txt = await res.text();
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      return txt;
+    }finally{ clearTimeout(timer); }
+  }
+
+  async function fetchTenkoh2TLE(){
+    const sources = [
+      { label:"CelesTrak CATNR 68261", url:"https://celestrak.org/NORAD/elements/gp.php?CATNR=68261&FORMAT=TLE" },
+      { label:"CelesTrak NAME TEN-KOH 2", url:"https://celestrak.org/NORAD/elements/gp.php?NAME=TEN-KOH%202&FORMAT=TLE" }
+    ];
+    const errors = [];
+    for(const s of sources){
+      try{
+        const txt = await fetchTextWithTimeout(s.url);
+        return parseTLEText(txt, s.label);
+      }catch(e){ errors.push(`${s.label}: ${e.message}`); }
+    }
+    throw new Error(errors.join(" / "));
+  }
+
+  async function initSat(){
+    try{
+      const tle = await fetchTenkoh2TLE();
+      statusEl.textContent = "TLE取得成功: " + tle.name;
+      statusEl.className = "tle-badge --ok";
+      satrec = satellite.twoline2satrec(tle.l1, tle.l2);
+    }catch(e){
+      statusEl.textContent = "TLE取得失敗: " + e.message;
+      statusEl.className = "tle-badge --fail";
+      console.error(e);
+    }
+  }
+
+  // ---- 画面切り替え ----
+  const navBtns = document.querySelectorAll('.top-nav-btn');
+  const viewEls = {
+    ar: document.getElementById('view-ar'),
+    globe: document.getElementById('view-globe'),
+    passes: document.getElementById('view-passes'),
+    info: document.getElementById('view-info')
+  };
+  const arVideo = document.getElementById('arVideo');
+
+  function switchView(view){
+    if (view === currentView) return;
+    if (currentView === 'ar') ARMode.stopCamera();
+    currentView = view;
+    Object.keys(viewEls).forEach(k => viewEls[k].classList.toggle('--active', k === view));
+    navBtns.forEach(b => b.classList.toggle('--active', b.dataset.view === view));
+    if (view === 'ar') {
+      ARMode.requestCameraPermission()
+        .then(() => ARMode.attachStreamToVideo(arVideo))
+        .catch(err => console.error('カメラの再取得に失敗しました', err));
+    }
+  }
+
+  navBtns.forEach(btn => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
+
+  // ---- 開始フロー: 位置情報 → カメラ → センサー ----
+  function getGeolocationOnce(){
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, alt: (pos.coords.altitude || 50) / 1000 }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    });
+  }
+
+  btnStart.addEventListener('click', async () => {
+    btnStart.disabled = true;
+    startError.textContent = '';
+    try{
+      const geo = await getGeolocationOnce();
+      if (geo) {
+        ObserverManager.getCoords && null;
+        window.dispatchEvent(new CustomEvent('observerchange', { detail: geo }));
+        observerCoords = geo;
+        const latEl = document.getElementById('obs-lat');
+        const lonEl = document.getElementById('obs-lon');
+        if (latEl) latEl.value = geo.lat.toFixed(4);
+        if (lonEl) lonEl.value = geo.lon.toFixed(4);
+      } else {
+        observerCoords = ObserverManager.getCoords();
+      }
+
+      await ARMode.requestCameraPermission();
+      await ARMode.requestOrientationPermission();
+
+      ARMode.attachStreamToVideo(arVideo);
+      startOverlay.classList.add('--hidden');
+    }catch(err){
+      console.error(err);
+      startError.textContent = '許可が得られませんでした: ' + err.message + '。もう一度お試しください。';
+      btnStart.disabled = false;
+    }
+  });
+
+  // ---- 通過予測 (5秒おき) ----
+  let lastPassUpdate = 0;
+  let currentPasses = [];
+  let nextPassTrack = [];
+
+  function updatePassPrediction(){
+    if (!satrec || !observerCoords) return;
+    const now = Date.now();
+    if (now - lastPassUpdate < 5000) return;
+    lastPassUpdate = now;
+
+    currentPasses = PassPredictor.findPasses(satrec, observerCoords, 24);
+    nextPassTrack = currentPasses.length > 0 ? PassPredictor.getPassTrack(satrec, observerCoords, currentPasses[0]) : [];
+
+    const listEl = document.getElementById('pass-list');
+    if (!listEl) return;
+    if (currentPasses.length === 0) {
+      listEl.innerHTML = '<li class="pass-item" style="color: var(--muted); text-align: center;">24時間以内の通過なし</li>';
+      return;
+    }
+    let html = '';
+    currentPasses.slice(0, 5).forEach((p) => {
+      const elClass = p.maxEl >= 30 ? '--high' : (p.maxEl >= 10 ? '--mid' : '--low');
+      html += `<li class="pass-item">`;
+      html += `<div class="pass-item-header">`;
+      html += `<span class="pass-time">${PassPredictor.formatTimeJST(p.aos)} ~ ${PassPredictor.formatTimeJST(p.los)}</span>`;
+      html += `<span class="pass-maxel ${elClass}">${p.maxEl.toFixed(0)}°</span>`;
+      html += `</div>`;
+      html += `<div class="pass-direction">${p.aosDir} → ${p.losDir}（${Math.floor(p.duration)}秒間）</div>`;
+      html += `</li>`;
+    });
+    listEl.innerHTML = html;
+  }
+
+  function updatePassCountdown(){
+    const cdEl = document.getElementById('pass-countdown');
+    if (!cdEl) return;
+    if (currentPasses.length > 0) {
+      const secToAos = (currentPasses[0].aos.getTime() - Date.now()) / 1000;
+      cdEl.textContent = PassPredictor.formatCountdown(secToAos);
+    } else {
+      cdEl.textContent = '---';
+    }
+  }
+
+  // ---- 情報画面 (方位/ドップラー/天空) ----
+  function updateInfoView(currentLook){
+    const elAz = document.getElementById('look-az');
+    const elEl = document.getElementById('look-el');
+    const elRg = document.getElementById('look-rg');
+    const elDir = document.getElementById('look-dir');
+    const elStatus = document.getElementById('look-status');
+
+    if (currentLook) {
+      if (elAz) elAz.textContent = currentLook.azimuth.toFixed(1) + "°";
+      if (elEl) elEl.textContent = currentLook.elevation.toFixed(1) + "°";
+      if (elRg) elRg.textContent = currentLook.range.toFixed(0) + " km";
+      if (elDir) elDir.textContent = ObserverManager.getCompassDirection(currentLook.azimuth);
+      if (elStatus) {
+        if (currentLook.elevation > 0) {
+          elStatus.textContent = "受信可能 (VISIBLE)";
+          elStatus.className = "visibility-badge --visible";
+        } else {
+          elStatus.textContent = "地平線下 (BELOW HORIZON)";
+          elStatus.className = "visibility-badge --invisible";
+        }
+      }
+    }
+
+    if (satrec && observerCoords) {
+      const data = DopplerCalc.calculateDoppler(satrec, observerCoords, new Date());
+      const rxEl = document.getElementById('doppler-rx');
+      const offsetEl = document.getElementById('doppler-offset');
+      const dirEl = document.getElementById('doppler-dir');
+      if (data) {
+        if (rxEl) rxEl.textContent = data.rxFreqMhz.toFixed(4) + " MHz";
+        if (offsetEl) {
+          const sign = data.shiftKhz >= 0 ? "+" : "";
+          offsetEl.textContent = `OFFSET: ${sign}${data.shiftKhz.toFixed(2)} kHz`;
+          offsetEl.className = "doppler-offset";
+          if (data.shiftKhz > 0.05) offsetEl.classList.add("--plus");
+          else if (data.shiftKhz < -0.05) offsetEl.classList.add("--minus");
+          else offsetEl.classList.add("--zero");
+        }
+        if (dirEl) {
+          const labels = { APPROACHING: "接近中 (周波数上昇)", RECEDING: "遠ざかり中 (周波数下降)", STATIONARY: "静止・天頂付近" };
+          dirEl.textContent = labels[data.status] || "---";
+        }
+      }
+    }
+
+    SkyPlot.draw(currentLook, nextPassTrack, currentPasses);
+  }
+
+  // ---- 地球儀 ----
+  const globeCanvas = document.getElementById('globe');
+  const gctx = globeCanvas.getContext('2d');
+  let gW = 0, gH = 0;
+  const projection = d3.geoOrthographic().translate([0,0]).scale(100).clipAngle(90).precision(0.3);
+  const path = d3.geoPath(projection, gctx);
+  const graticule = d3.geoGraticule().step([20,20]);
+  let land = null;
+  let rotate = [0,0,0];
+
+  function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+  function resizeGlobe(){
+    const rect = globeCanvas.getBoundingClientRect();
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    globeCanvas.width = Math.round(rect.width * dpr);
+    globeCanvas.height = Math.round(rect.height * dpr);
+    gW = globeCanvas.width; gH = globeCanvas.height;
+    projection.translate([gW/2, gH/2]).scale(Math.min(gW,gH) * 0.48);
+  }
+  window.addEventListener('resize', resizeGlobe, {passive:true});
+
+  fetch("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").then(r=>r.json()).then(topo => {
+    land = topojson.feature(topo, topo.objects.land);
+  }).catch(() => {});
+
+  function llhAt(satr, date){
+    if(!satr) return null;
+    const eci = satellite.propagate(satr, date);
+    if(!eci.position) return null;
+    const gmst = satellite.gstime(date);
+    const geo = satellite.eciToGeodetic(eci.position, gmst);
+    let lon = satellite.degreesLong(geo.longitude);
+    while(lon>180) lon-=360; while(lon<-180) lon+=360;
+    return { lat: satellite.degreesLat(geo.latitude), lon, alt: geo.height };
+  }
+
+  function drawGlobe(){
+    if (!land) return;
+    resizeGlobe();
+    const pos = llhAt(satrec, new Date());
+    if (pos) rotate[0] = -pos.lon;
+    projection.rotate(rotate);
+
+    gctx.clearRect(0,0,gW,gH);
+    gctx.beginPath(); path({type:"Sphere"}); gctx.fillStyle=cssVar('--ocean'); gctx.fill();
+    gctx.beginPath(); path(land); gctx.fillStyle=cssVar('--land'); gctx.globalAlpha=0.96; gctx.fill(); gctx.globalAlpha=1;
+    gctx.beginPath(); path(land); gctx.strokeStyle=cssVar('--lines'); gctx.lineWidth=0.7; gctx.stroke();
+    gctx.beginPath(); path(graticule()); gctx.strokeStyle="#222"; gctx.lineWidth=0.5; gctx.stroke();
+
+    if (observerCoords) {
+      const op = projection([observerCoords.lon, observerCoords.lat]);
+      if (op) {
+        gctx.beginPath(); gctx.arc(op[0], op[1], 5, 0, Math.PI*2);
+        gctx.fillStyle = cssVar('--guide'); gctx.fill();
+      }
+    }
+
+    if (satrec) {
+      const track = { type:"LineString", coordinates: [] };
+      const now = new Date();
+      for (let m=-45; m<=90; m+=1) {
+        const t = new Date(now.getTime() + m*60*1000);
+        const p = llhAt(satrec, t);
+        if (p) {
+          let L = p.lon;
+          if (track.coordinates.length) {
+            const prev = track.coordinates[track.coordinates.length-1][0], d = L - prev;
+            if (d>180) L-=360; else if (d<-180) L+=360;
+          }
+          track.coordinates.push([L, p.lat]);
+        }
+      }
+      const oldClip = projection.clipAngle();
+      projection.clipAngle(180);
+      gctx.beginPath(); path(track); gctx.strokeStyle=cssVar('--orbit'); gctx.lineWidth=1.8; gctx.globalAlpha=0.9;
+      gctx.shadowColor=cssVar('--orbit'); gctx.shadowBlur=8; gctx.stroke(); gctx.shadowBlur=0; gctx.globalAlpha=1;
+      projection.clipAngle(oldClip);
+    }
+
+    if (pos) {
+      const sp = projection([pos.lon, pos.lat]);
+      if (sp) {
+        gctx.strokeStyle = cssVar('--sat'); gctx.lineWidth = 1.8;
+        gctx.beginPath();
+        gctx.moveTo(sp[0]-8, sp[1]); gctx.lineTo(sp[0]+8, sp[1]);
+        gctx.moveTo(sp[0], sp[1]-8); gctx.lineTo(sp[0], sp[1]+8);
+        gctx.stroke();
+        gctx.beginPath(); gctx.arc(sp[0], sp[1], 4, 0, Math.PI*2); gctx.stroke();
+      }
+    }
+  }
+
+  // ---- メインループ ----
+  SkyPlot.init('skyplot');
+
+  const arEls = {
+    guideText: document.getElementById('arGuideText'),
+    statusText: document.getElementById('arStatus'),
+    reticle: document.getElementById('arReticle'),
+    marker: document.getElementById('arMarker'),
+    arrowUp: document.getElementById('arArrowUp'),
+    arrowDown: document.getElementById('arArrowDown'),
+    arrowLeft: document.getElementById('arArrowLeft'),
+    arrowRight: document.getElementById('arArrowRight'),
+    tgtAz: document.getElementById('arTgtAz'),
+    tgtEl: document.getElementById('arTgtEl')
+  };
+
+  function tick(){
+    try{
+      const currentLook = (satrec && observerCoords) ? SatelliteCalc.getLookAngles(satrec, observerCoords, new Date()) : null;
+
+      updatePassPrediction();
+      updatePassCountdown();
+
+      if (currentView === 'ar') {
+        ARMode.update(currentLook, !!satrec, !!observerCoords, arEls);
+      } else if (currentView === 'globe') {
+        drawGlobe();
+      } else if (currentView === 'info') {
+        updateInfoView(currentLook);
+      }
+    }catch(e){
+      console.error('tick()内でエラーが発生しました', e);
+      window.__earlyErrors.push({message: 'tick() error: ' + e.message, stack: String(e.stack)});
+    }finally{
+      requestAnimationFrame(tick);
+    }
+  }
+
+  await initSat();
+  setInterval(initSat, 60*60*1000);
+  tick();
+})();
+</script>
+</body>
+</html>

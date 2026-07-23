@@ -1,0 +1,212 @@
+/* ==========================================================
+   ui-components.css — TEN-KOH 2 Tracker 共通UIコンポーネント
+   既存HUD/legendのトーンに合わせた再利用可能クラス。
+   ========================================================== */
+
+/* ----------------------------------------------------------
+   レイヤー構造
+   背景装飾 → ブランド → コンテンツ → UI の順で重なる
+   ---------------------------------------------------------- */
+.bg-art {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.brand-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+}
+
+.ui-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+.ui-layer > * {
+  pointer-events: auto;
+}
+
+/* ----------------------------------------------------------
+   共通パネル — 既存の .legend, .tleStatus と同じトーン
+   ---------------------------------------------------------- */
+.ui-panel {
+  background: var(--panel);
+  border: 1px solid var(--panelBorder);
+  border-radius: var(--panelRadius, 10px);
+  padding: 10px 14px;
+  color: var(--fg);
+  font-family: var(--fontBase);
+  font-size: 13px;
+}
+
+/* ----------------------------------------------------------
+   テキストクラス
+   ---------------------------------------------------------- */
+.ui-label {
+  color: var(--muted, #888);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+}
+
+.ui-value {
+  color: var(--fg);
+  font-size: 1.15rem;
+  font-family: var(--fontMono);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.ui-value.--accent {
+  color: var(--accent);
+}
+
+/* ----------------------------------------------------------
+   ボタン — 既存パネルに合わせた暗色ベース
+   ---------------------------------------------------------- */
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(0, 200, 255, 0.10);
+  border: 1px solid rgba(0, 200, 255, 0.25);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-family: var(--fontBase);
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ui-button:hover {
+  background: rgba(0, 200, 255, 0.18);
+  border-color: rgba(0, 200, 255, 0.4);
+}
+.ui-button:active {
+  background: rgba(0, 200, 255, 0.25);
+}
+
+/* ----------------------------------------------------------
+   ステータスインジケーター
+   ---------------------------------------------------------- */
+.ui-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.ui-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.ui-status.--ok::before    { background: var(--ok); }
+.ui-status.--warn::before  { background: var(--warn); }
+.ui-status.--error::before { background: var(--error); }
+
+/* ----------------------------------------------------------
+   装飾要素 — 地球儀操作を妨げない
+   ---------------------------------------------------------- */
+[data-decorative],
+.decorative-svg {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ----------------------------------------------------------
+   Phase 3.5: HUD & 装飾グラフィック
+   ---------------------------------------------------------- */
+
+/* 背景のドットグリッド */
+.bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(0, 209, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* スキャンライン効果 */
+.bg-scanlines {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.2) 50%
+  );
+  background-size: 100% 4px;
+  z-index: 2;
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+/* 画面の四隅のコーナーブラケット */
+.corner-bracket {
+  position: fixed;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid rgba(0, 209, 255, 0.25);
+  z-index: 1005;
+  pointer-events: none;
+}
+.corner-bracket.--tl { top: 12px; left: 12px; border-right: none; border-bottom: none; }
+.corner-bracket.--tr { top: 12px; right: 12px; border-left: none; border-bottom: none; }
+.corner-bracket.--bl { bottom: 12px; left: 12px; border-right: none; border-top: none; }
+.corner-bracket.--br { bottom: 12px; right: 12px; border-left: none; border-top: none; }
+
+/* 中央HUDレティクル（地球儀の背後） */
+.hud-reticle-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90vh;
+  height: 90vh;
+  max-width: 800px;
+  max-height: 800px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+/* 左上の常時ロゴ表示（N.U Cosmic Campus） */
+.brand-logo-top {
+  position: fixed;
+  left: 16px;
+  top: 14px;
+  height: 28px;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0.65;
+  transition: opacity 0.2s;
+}
+.brand-logo-top img {
+  height: 100%;
+  width: auto;
+  display: block;
+}
+
+/* モバイル表示時の調整 */
+@media (max-width: 700px) {
+  .brand-logo-top {
+    left: 10px;
+    top: 10px;
+    height: 20px;
+  }
+}

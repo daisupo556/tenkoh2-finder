@@ -1,0 +1,43 @@
+/* ==========================================================
+   variables.css — TEN-KOH 2 Tracker デザイントークン
+   既存の :root 変数を一元管理する。
+   ========================================================== */
+
+:root {
+  /* === 基本カラー === */
+  --bg: #000;
+  --fg: #e6e6e6;
+  --muted: #888;
+  --accent: #00d1ff;
+  --accentDim: rgba(0, 200, 255, 0.2);
+
+  /* === 地球儀 === */
+  --land: #4a5056;
+  --ocean: #02060c;
+  --lines: #2a2f35;
+  --guide: #69f;
+
+  /* === 衛星・軌道 === */
+  --orbit: #56d6ff;
+  --sat: #00d1ff;
+  --ghost: #8ad7ff;
+  --future1: #3bc1ff;
+
+  /* === パネル === */
+  --panel: #0f141acc;
+  --panelBorder: #1f2833;
+  --panelRadius: 10px;
+
+  /* === コールアウト === */
+  --callout: #10151bcc;
+  --calloutBorder: #2a3644;
+
+  /* === タイポグラフィ === */
+  --fontBase: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  --fontMono: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+
+  /* === ステータス === */
+  --warn: #f59e0b;
+  --error: #ef4444;
+  --ok: #22c55e;
+}
