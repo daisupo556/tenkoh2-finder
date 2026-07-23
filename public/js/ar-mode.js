@@ -17,8 +17,9 @@ const ARMode = (function() {
   let targetAzimuth = 0;
   let targetElevation = 0;
 
-  const TOLERANCE_DEG = 15;   // 4エレ八木の指向性を踏まえた許容誤差
-  const ASSUMED_FOV_H = 65;   // 背面カメラの想定水平画角(度)。実機によって前後する概算値
+  const TOLERANCE_DEG = 15;    // 4エレ八木の指向性を踏まえた許容誤差
+  const AIM_TIME_MAX_DEG = 20; // この角度以内に軌道があれば「今向けている場所の時刻」を表示
+  const ASSUMED_FOV_H = 65;    // 背面カメラの想定水平画角(度)。実機によって前後する概算値
 
   /**
    * センサーの向きを取得
@@ -109,6 +110,23 @@ const ARMode = (function() {
     const m = Math.sqrt(dot(v, v));
     if (!m) return { x: 0, y: 0, z: 0 };
     return { x: v.x / m, y: v.y / m, z: v.z / m };
+  }
+
+  /**
+   * 通過軌跡の中で、いま向けている方向(currentHeading/currentPitch)に
+   * もっとも近い点を探す
+   */
+  function findNearestTrackPoint(passTrack) {
+    const forward = toVector(currentHeading, currentPitch);
+    let best = null, bestDot = -Infinity;
+    for (let i = 0; i < passTrack.length; i++) {
+      const v = toVector(passTrack[i].azimuth, passTrack[i].elevation);
+      const d = dot(v, forward);
+      if (d > bestDot) { bestDot = d; best = passTrack[i]; }
+    }
+    if (!best) return null;
+    const angleDeg = Math.acos(Math.max(-1, Math.min(1, bestDot))) * 180 / Math.PI;
+    return { point: best, angleDeg };
   }
 
   /**
@@ -234,6 +252,28 @@ const ARMode = (function() {
           ctx.fillText(label, lx, ly - 4);
         }
       });
+
+      // --- いま向けている場所にもっとも近い軌道上の点 → その時刻を表示 ---
+      const nearest = findNearestTrackPoint(passTrack);
+      if (nearest && nearest.angleDeg <= AIM_TIME_MAX_DEG) {
+        const pt = project(nearest.point.azimuth, nearest.point.elevation, w, h);
+        if (pt.withinFov) {
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, 9, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+        if (els.aimTime) {
+          const timeLabel = nearest.point.time.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', hour12: false });
+          els.aimTime.textContent = `この方向 → ${timeLabel} ごろ`;
+          els.aimTime.classList.add('--show');
+        }
+      } else if (els.aimTime) {
+        els.aimTime.classList.remove('--show');
+      }
+    } else if (els.aimTime) {
+      els.aimTime.classList.remove('--show');
     }
 
     if (!lookAngles) {
