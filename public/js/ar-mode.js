@@ -26,8 +26,9 @@ const ARMode = (function() {
 
     if (event.beta !== null) {
       // beta: 0=画面上向きに水平, 90=画面を立てて構えた状態(=カメラは水平線を向く)
-      // 上を向けるほど beta は 90 から離れていくため、90を基準に仰角へ変換する
-      currentPitch = 90 - event.beta;
+      // 実機検証の結果、90を基準に上下が逆だったため beta-90 に修正
+      // (スマホを上に傾けるほど currentPitch が増える = 表示も正しく下に動く)
+      currentPitch = event.beta - 90;
     }
   }
 
@@ -138,22 +139,28 @@ const ARMode = (function() {
     // --- 軌道ライン + 時刻ドットの描画 ---
     if (passTrack && passTrack.length >= 2) {
       const now = Date.now();
-      ctx.lineWidth = 2.5;
-      ctx.strokeStyle = 'rgba(86, 214, 255, 0.55)';
+
+      // 実カメラ映像の上でも視認できるよう、太め+グロー付きで描画
+      ctx.save();
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(86, 214, 255, 0.9)';
+      ctx.shadowColor = 'rgba(86, 214, 255, 0.9)';
+      ctx.shadowBlur = 10;
       ctx.beginPath();
       let penDown = false;
-      let prevPt = null;
       for (let i = 0; i < passTrack.length; i++) {
         const pt = project(passTrack[i].azimuth, passTrack[i].elevation, w, h);
         const tooFar = Math.abs(pt.diffAz) > MAX_TRACK_ANGLE || Math.abs(pt.diffEl) > MAX_TRACK_ANGLE;
-        if (tooFar) { penDown = false; prevPt = null; continue; }
+        if (tooFar) { penDown = false; continue; }
         if (!penDown) { ctx.moveTo(pt.x, pt.y); penDown = true; }
         else { ctx.lineTo(pt.x, pt.y); }
-        prevPt = pt;
       }
       ctx.stroke();
+      ctx.restore();
 
-      // 通過点ドット (約1分間隔)
+      // 通過点ドット (約1分間隔) + 数分おきに経過時刻ラベル
       let lastDotMin = null;
       passTrack.forEach((p) => {
         const minFromNow = Math.round((p.time.getTime() - now) / 60000);
@@ -161,10 +168,29 @@ const ARMode = (function() {
         lastDotMin = minFromNow;
         const pt = project(p.azimuth, p.elevation, w, h);
         if (!pt.withinFov) return;
+
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(86, 214, 255, 0.7)';
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(10, 18, 24, 0.85)';
         ctx.fill();
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(86, 214, 255, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 2分おきに「+N分」ラベルを表示 (0=現在時刻は現在位置マーカー側に任せて省く)
+        if (minFromNow % 2 === 0 && minFromNow !== 0) {
+          const label = (minFromNow > 0 ? '+' : '') + minFromNow + '分';
+          ctx.font = 'bold 13px system-ui, sans-serif';
+          const tw = ctx.measureText(label).width;
+          const lx = pt.x + 10, ly = pt.y - 10;
+          ctx.fillStyle = 'rgba(10, 18, 24, 0.75)';
+          ctx.fillRect(lx - 3, ly - 13, tw + 6, 17);
+          ctx.fillStyle = 'rgba(200, 240, 255, 0.95)';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, lx, ly - 4);
+        }
       });
     }
 
