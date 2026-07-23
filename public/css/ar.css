@@ -219,6 +219,23 @@ html, body {
   box-shadow: 0 0 20px var(--ok, #22c55e);
   animation: ar-pulse-locked 1.2s infinite alternate;
 }
+.ar-aim-time {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, 46px);
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #fff;
+  background: rgba(10, 18, 24, 0.75);
+  padding: 4px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ar-aim-time.--show { opacity: 1; }
+
 @keyframes ar-pulse-locked {
   from { box-shadow: 0 0 8px rgba(34,197,94,0.4); }
   to   { box-shadow: 0 0 22px rgba(34,197,94,0.85); }

@@ -54,6 +54,7 @@
       <div id="arStatus" class="ar-status">ALIGNING (調整中)</div>
     </div>
     <div id="arReticle" class="ar-reticle"></div>
+    <div id="arAimTime" class="ar-aim-time"></div>
     <div class="ar-stat-bar">
       <span>目標 AZ <b id="arTgtAz">--</b>°</span>
       <span>EL <b id="arTgtEl">--</b>°</span>
@@ -517,6 +518,7 @@
     statusText: document.getElementById('arStatus'),
     reticle: document.getElementById('arReticle'),
     canvas: document.getElementById('arCanvas'),
+    aimTime: document.getElementById('arAimTime'),
     tgtAz: document.getElementById('arTgtAz'),
     tgtEl: document.getElementById('arTgtEl')
   };
