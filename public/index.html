@@ -279,10 +279,30 @@
   btnStart.addEventListener('click', async () => {
     btnStart.disabled = true;
     startError.textContent = '';
+
+    // iOSの DeviceOrientationEvent.requestPermission() は「ユーザー操作の直後」でないと
+    // 拒否されることがあるため、他の許可(位置情報・カメラ)より先に、タップ直後に呼ぶ。
+    try{
+      await ARMode.requestOrientationPermission();
+    }catch(err){
+      console.error(err);
+      startError.textContent = 'モーションセンサーの許可に失敗しました: ' + err.message + '。設定アプリでSafariのモーションセンサーへのアクセスを確認し、もう一度お試しください。';
+      btnStart.disabled = false;
+      return;
+    }
+
+    try{
+      await ARMode.requestCameraPermission();
+    }catch(err){
+      console.error(err);
+      startError.textContent = 'カメラの許可に失敗しました: ' + err.message + '。設定アプリでこのサイトのカメラへのアクセスを確認し、もう一度お試しください。';
+      btnStart.disabled = false;
+      return;
+    }
+
     try{
       const geo = await getGeolocationOnce();
       if (geo) {
-        ObserverManager.getCoords && null;
         window.dispatchEvent(new CustomEvent('observerchange', { detail: geo }));
         observerCoords = geo;
         const latEl = document.getElementById('obs-lat');
@@ -293,14 +313,11 @@
         observerCoords = ObserverManager.getCoords();
       }
 
-      await ARMode.requestCameraPermission();
-      await ARMode.requestOrientationPermission();
-
       ARMode.attachStreamToVideo(arVideo);
       startOverlay.classList.add('--hidden');
     }catch(err){
       console.error(err);
-      startError.textContent = '許可が得られませんでした: ' + err.message + '。もう一度お試しください。';
+      startError.textContent = '位置情報の取得に失敗しました: ' + err.message + '。もう一度お試しください。';
       btnStart.disabled = false;
     }
   });
