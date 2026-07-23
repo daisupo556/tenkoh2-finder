@@ -86,81 +86,131 @@ const ARMode = (function() {
     }
   }
 
+  // 画面外に出た点を追跡する際、これ以上離れた点は線を繋がず切る (角度)
+  const MAX_TRACK_ANGLE = ASSUMED_FOV_H * 1.5;
+
+  /**
+   * 方位角・仰角 → 現在の向きを基準にした画面座標に変換
+   */
+  function project(az, el, w, h) {
+    let diffAz = az - currentHeading;
+    diffAz = (diffAz + 180 + 360) % 360 - 180;
+    const diffEl = el - currentPitch;
+    const fovV = ASSUMED_FOV_H * (h / w);
+    const x = w / 2 + diffAz * (w / ASSUMED_FOV_H);
+    const y = h / 2 - diffEl * (h / fovV);
+    const withinFov = Math.abs(diffAz) <= ASSUMED_FOV_H / 2 && Math.abs(diffEl) <= fovV / 2;
+    return { x, y, diffAz, diffEl, withinFov };
+  }
+
   /**
    * 毎フレームのAR表示更新
-   * @param {Object|null} lookAngles - { azimuth, elevation }
+   * @param {Object|null} lookAngles - { azimuth, elevation } 現在の衛星位置
    * @param {boolean} hasSatrec
    * @param {boolean} hasObserverCoords
-   * @param {Object} els - 関連DOM要素一式
+   * @param {Array} passTrack - [{azimuth, elevation, time}] 軌道上の通過ポイント列 (現在/次の通過)
+   * @param {Object} els - 関連DOM/Canvas要素一式
    */
-  function update(lookAngles, hasSatrec, hasObserverCoords, els) {
+  function update(lookAngles, hasSatrec, hasObserverCoords, passTrack, els) {
+    const canvas = els.canvas;
+    const ctx = canvas.getContext('2d');
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const w = window.innerWidth || document.documentElement.clientWidth;
+    const h = window.innerHeight || document.documentElement.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
     if (!hasObserverCoords) {
       els.guideText.textContent = '📍 位置情報を取得できていません';
-      hideMarkerAndArrows(els);
+      if (els.reticle) els.reticle.classList.remove('--locked');
       return;
     }
     if (!hasSatrec) {
       els.guideText.textContent = '🛰️ TLE衛星データを取得中...';
-      hideMarkerAndArrows(els);
+      if (els.reticle) els.reticle.classList.remove('--locked');
       return;
     }
+
+    // --- 軌道ライン + 時刻ドットの描画 ---
+    if (passTrack && passTrack.length >= 2) {
+      const now = Date.now();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(86, 214, 255, 0.55)';
+      ctx.beginPath();
+      let penDown = false;
+      let prevPt = null;
+      for (let i = 0; i < passTrack.length; i++) {
+        const pt = project(passTrack[i].azimuth, passTrack[i].elevation, w, h);
+        const tooFar = Math.abs(pt.diffAz) > MAX_TRACK_ANGLE || Math.abs(pt.diffEl) > MAX_TRACK_ANGLE;
+        if (tooFar) { penDown = false; prevPt = null; continue; }
+        if (!penDown) { ctx.moveTo(pt.x, pt.y); penDown = true; }
+        else { ctx.lineTo(pt.x, pt.y); }
+        prevPt = pt;
+      }
+      ctx.stroke();
+
+      // 通過点ドット (約1分間隔)
+      let lastDotMin = null;
+      passTrack.forEach((p) => {
+        const minFromNow = Math.round((p.time.getTime() - now) / 60000);
+        if (lastDotMin !== null && minFromNow === lastDotMin) return;
+        lastDotMin = minFromNow;
+        const pt = project(p.azimuth, p.elevation, w, h);
+        if (!pt.withinFov) return;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(86, 214, 255, 0.7)';
+        ctx.fill();
+      });
+    }
+
     if (!lookAngles) {
       els.guideText.textContent = '⚠️ 軌道計算エラーが発生しました';
-      hideMarkerAndArrows(els);
+      if (els.reticle) els.reticle.classList.remove('--locked');
       return;
     }
 
     targetAzimuth = lookAngles.azimuth;
     targetElevation = lookAngles.elevation;
-
     if (els.tgtAz) els.tgtAz.textContent = targetAzimuth.toFixed(0) + '°';
     if (els.tgtEl) els.tgtEl.textContent = targetElevation.toFixed(0) + '°';
 
-    if (targetElevation <= 0) {
-      els.guideText.textContent = '地平線の下に隠れています';
-    } else {
-      const dir = (typeof ObserverManager !== 'undefined')
-        ? ObserverManager.getCompassDirection(targetAzimuth)
-        : '';
-      els.guideText.textContent = `【${dir}】の空を見上げて下さい (仰角 ${targetElevation.toFixed(0)}°)`;
+    const isVisible = targetElevation > 0;
+    if (!isVisible) {
+      const dir = (typeof ObserverManager !== 'undefined') ? ObserverManager.getCompassDirection(targetAzimuth) : '';
+      els.guideText.textContent = `地平線の下に隠れています(次回は【${dir}】方向)`;
+      if (els.reticle) els.reticle.classList.remove('--locked');
+      if (els.statusText) { els.statusText.textContent = '通過待ち'; els.statusText.style.color = 'var(--muted)'; }
+      return;
     }
 
-    // 方位差 (-180〜+180に正規化)
-    let diffAz = targetAzimuth - currentHeading;
-    diffAz = (diffAz + 180 + 360) % 360 - 180;
-    const diffEl = targetElevation - currentPitch;
+    const dir = (typeof ObserverManager !== 'undefined') ? ObserverManager.getCompassDirection(targetAzimuth) : '';
+    els.guideText.textContent = `【${dir}】の空を見上げて下さい (仰角 ${targetElevation.toFixed(0)}°)`;
 
-    const w = window.innerWidth || document.documentElement.clientWidth;
-    const h = window.innerHeight || document.documentElement.clientHeight;
-    const fovV = ASSUMED_FOV_H * (h / w);
-    const pxPerDegX = w / ASSUMED_FOV_H;
-    const pxPerDegY = h / fovV;
+    // --- 現在位置の点を描画 (視野内=実位置 / 視野外=画面端ににじませる) ---
+    const cur = project(targetAzimuth, targetElevation, w, h);
+    const isLocked = Math.abs(cur.diffAz) <= TOLERANCE_DEG && Math.abs(cur.diffEl) <= TOLERANCE_DEG;
+    const dotColor = isLocked ? '34, 197, 94' : '0, 209, 255'; // ok緑 / accentシアン (RGB)
 
-    const withinH = Math.abs(diffAz) <= ASSUMED_FOV_H / 2;
-    const withinV = Math.abs(diffEl) <= fovV / 2;
-
-    [els.arrowUp, els.arrowDown, els.arrowLeft, els.arrowRight].forEach((a) => {
-      if (a) a.classList.remove('--show');
-    });
-
-    if (withinH && withinV) {
-      const offsetX = diffAz * pxPerDegX;
-      const offsetY = -diffEl * pxPerDegY;
-      if (els.marker) {
-        els.marker.style.display = 'block';
-        els.marker.style.transform = `translate(calc(-50% + ${offsetX}px), calc(-50% + ${offsetY}px))`;
-      }
+    if (cur.withinFov) {
+      drawGlowDot(ctx, cur.x, cur.y, 12, dotColor, 1);
     } else {
-      if (els.marker) els.marker.style.display = 'none';
-      if (diffAz > ASSUMED_FOV_H / 2 && els.arrowRight) els.arrowRight.classList.add('--show');
-      if (diffAz < -ASSUMED_FOV_H / 2 && els.arrowLeft) els.arrowLeft.classList.add('--show');
-      if (diffEl > fovV / 2 && els.arrowUp) els.arrowUp.classList.add('--show');
-      if (diffEl < -fovV / 2 && els.arrowDown) els.arrowDown.classList.add('--show');
+      // 画面中心から現在位置方向への直線と、画面端(少し内側)との交点を求めて滲ませる
+      const margin = 26;
+      const cx = w / 2, cy = h / 2;
+      const dx = cur.x - cx, dy = cur.y - cy;
+      const scaleX = dx !== 0 ? (w / 2 - margin) / Math.abs(dx) : Infinity;
+      const scaleY = dy !== 0 ? (h / 2 - margin) / Math.abs(dy) : Infinity;
+      const scale = Math.max(0, Math.min(scaleX, scaleY));
+      const ex = cx + dx * scale, ey = cy + dy * scale;
+      drawGlowDot(ctx, ex, ey, 16, dotColor, 0.55);
     }
 
-    const isLocked = Math.abs(diffAz) <= TOLERANCE_DEG && Math.abs(diffEl) <= TOLERANCE_DEG;
     if (els.reticle) els.reticle.classList.toggle('--locked', isLocked);
-    if (els.marker) els.marker.classList.toggle('--locked', isLocked);
     if (els.statusText) {
       if (isLocked) {
         els.statusText.textContent = 'LOCK ON (受信可能角)';
@@ -172,12 +222,22 @@ const ARMode = (function() {
     }
   }
 
-  function hideMarkerAndArrows(els) {
-    if (els.marker) els.marker.style.display = 'none';
-    [els.arrowUp, els.arrowDown, els.arrowLeft, els.arrowRight].forEach((a) => {
-      if (a) a.classList.remove('--show');
-    });
-    if (els.reticle) els.reticle.classList.remove('--locked');
+  /**
+   * にじみ(グロー)付きの点を描画する
+   */
+  function drawGlowDot(ctx, x, y, r, rgb, opacity) {
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 2.2);
+    grad.addColorStop(0, `rgba(${rgb}, ${0.9 * opacity})`);
+    grad.addColorStop(1, `rgba(${rgb}, 0)`);
+    ctx.beginPath();
+    ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${rgb}, ${opacity})`;
+    ctx.fill();
   }
 
   return {

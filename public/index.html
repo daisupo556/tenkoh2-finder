@@ -47,15 +47,13 @@
 <!-- AR画面 -->
 <div id="view-ar" class="view-screen --active">
   <video id="arVideo" autoplay playsinline muted></video>
+  <canvas id="arCanvas"></canvas>
   <div class="ar-overlay">
-    <div id="arGuideText" class="ar-guide-text">計算中...</div>
-    <div id="arStatus" class="ar-status">ALIGNING (調整中)</div>
+    <div class="ar-top-info">
+      <div id="arGuideText" class="ar-guide-text">計算中...</div>
+      <div id="arStatus" class="ar-status">ALIGNING (調整中)</div>
+    </div>
     <div id="arReticle" class="ar-reticle"></div>
-    <div id="arMarker" class="ar-marker"></div>
-    <div id="arArrowUp" class="ar-edge-arrow --up">▲</div>
-    <div id="arArrowDown" class="ar-edge-arrow --down">▼</div>
-    <div id="arArrowLeft" class="ar-edge-arrow --left">◀</div>
-    <div id="arArrowRight" class="ar-edge-arrow --right">▶</div>
     <div class="ar-stat-bar">
       <span>目標 AZ <b id="arTgtAz">--</b>°</span>
       <span>EL <b id="arTgtEl">--</b>°</span>
@@ -501,11 +499,7 @@
     guideText: document.getElementById('arGuideText'),
     statusText: document.getElementById('arStatus'),
     reticle: document.getElementById('arReticle'),
-    marker: document.getElementById('arMarker'),
-    arrowUp: document.getElementById('arArrowUp'),
-    arrowDown: document.getElementById('arArrowDown'),
-    arrowLeft: document.getElementById('arArrowLeft'),
-    arrowRight: document.getElementById('arArrowRight'),
+    canvas: document.getElementById('arCanvas'),
     tgtAz: document.getElementById('arTgtAz'),
     tgtEl: document.getElementById('arTgtEl')
   };
@@ -518,7 +512,7 @@
       updatePassCountdown();
 
       if (currentView === 'ar') {
-        ARMode.update(currentLook, !!satrec, !!observerCoords, arEls);
+        ARMode.update(currentLook, !!satrec, !!observerCoords, nextPassTrack, arEls);
       } else if (currentView === 'globe') {
         drawGlobe();
       } else if (currentView === 'info') {
