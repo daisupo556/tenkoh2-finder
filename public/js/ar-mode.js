@@ -28,7 +28,7 @@ const ARMode = (function() {
   const TOLERANCE_DEG = 15;    // 4エレ八木の指向性を踏まえた許容誤差
   const AIM_TIME_MAX_DEG = 20; // この角度以内に軌道があれば「今向けている場所の時刻」を表示
   const ASSUMED_FOV_H = 65;    // 背面カメラの想定水平画角(度)。実機によって前後する概算値
-  const SMOOTH_FACTOR = 0.25;  // センサー値の平滑化係数 (小さいほど滑らかだが反応が遅くなる)
+  const SMOOTH_FACTOR = 0.4;   // センサー値の平滑化係数 (小さいほど滑らかだが反応が遅れて「固定されていない」ように感じやすい)
 
   // スマホを垂直に構えた姿勢(beta≈90°)は、alpha/beta/gammaという3つの角度で
   // 向きを表す方式の数学的な特異点に近く、特にgamma(ロール)が実際には
@@ -97,6 +97,22 @@ const ARMode = (function() {
   /**
    * モーションセンサーの利用を要求する (iOSは明示的な許可が必要)
    */
+  /**
+   * 'deviceorientationabsolute' が使える環境(主にAndroid Chrome)ではそちらを優先する。
+   * 通常の 'deviceorientation' は、ブラウザによっては真北基準ではなく
+   * 「起動時のスマホの向き」基準の相対角度しか返さないことがあり、
+   * その場合はコンパスとして根本的に信頼できない値になってしまう。
+   * 'deviceorientationabsolute' (またはiOSのwebkitCompassHeading)は
+   * 真北基準であることが保証されている。
+   */
+  function attachOrientationListener() {
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+    } else {
+      window.addEventListener('deviceorientation', handleOrientation, true);
+    }
+  }
+
   function requestOrientationPermission() {
     return new Promise((resolve, reject) => {
       if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -104,7 +120,7 @@ const ARMode = (function() {
         DeviceOrientationEvent.requestPermission()
           .then((state) => {
             if (state === 'granted') {
-              window.addEventListener('deviceorientation', handleOrientation, true);
+              attachOrientationListener();
               resolve();
             } else {
               reject(new Error('センサーの利用が許可されませんでした'));
@@ -113,7 +129,7 @@ const ARMode = (function() {
           .catch(reject);
       } else {
         // iOS以外は許可プロンプト不要でそのまま使える
-        window.addEventListener('deviceorientation', handleOrientation, true);
+        attachOrientationListener();
         resolve();
       }
     });
