@@ -12,30 +12,33 @@
 
 const ARMode = (function() {
   let stream = null;
-  let currentHeading = 0;  // 0-360, 真北基準の想定 (磁北からの偏角補正は未実装)
-  let currentPitch = 0;    // -90=真下, 0=水平線, 90=天頂
+  // デバイスの姿勢(生のオイラー角)と画面の向きから、カメラの3軸ベクトルを毎フレーム計算する。
+  // 旧実装は「方位角＋仰角(beta-90)」だけを使い傾き(gamma)を無視していたため、端末を傾けると
+  // 軌道が一緒にズレて動き、天頂付近でジンバルロックして急に消える不具合があった。
+  let orient = { alpha: 0, beta: 90, gamma: 0, has: false };
+  let isAbsolute = false;      // deviceorientationabsolute (主にAndroid) で真北基準が取れているか
+  let compassHeading = null;   // iOS webkitCompassHeading (真北基準の方位)
+  let cam = { forward: { x: 0, y: 1, z: 0 }, right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 0, z: 1 } };
   let targetAzimuth = 0;
   let targetElevation = 0;
 
   const TOLERANCE_DEG = 15;    // 4エレ八木の指向性を踏まえた許容誤差
   const AIM_TIME_MAX_DEG = 20; // この角度以内に軌道があれば「今向けている場所の時刻」を表示
-  const ASSUMED_FOV_H = 65;    // 背面カメラの想定水平画角(度)。実機によって前後する概算値
+  const ASSUMED_FOV_H = 65;    // 背面カメラの想定水平画角(度)。実機で要キャリブレーション
 
   /**
-   * センサーの向きを取得
+   * センサーの向きを取得 (生のalpha/beta/gammaを保持し、投影時に回転行列で処理する)
    */
   function handleOrientation(event) {
-    if (event.webkitCompassHeading !== undefined) {
-      currentHeading = event.webkitCompassHeading;
-    } else if (event.alpha !== null) {
-      currentHeading = (360 - event.alpha) % 360;
+    if (event.alpha === null && event.beta === null && event.gamma === null) return;
+    orient.alpha = event.alpha || 0;
+    orient.beta = (event.beta === null) ? 90 : event.beta;
+    orient.gamma = event.gamma || 0;
+    orient.has = true;
+    if (typeof event.webkitCompassHeading === 'number' && !isNaN(event.webkitCompassHeading)) {
+      compassHeading = event.webkitCompassHeading; // iOS: 真北基準の方位
     }
-
-    if (event.beta !== null) {
-      // beta: 0=画面上向きに水平, 90=画面を立てて構えた状態(=カメラは水平線を向く)
-      // 実機検証の結果、90を基準に上下が逆だったため beta-90 に修正
-      currentPitch = event.beta - 90;
-    }
+    if (event.absolute === true) isAbsolute = true;
   }
 
   /**
@@ -52,6 +55,17 @@ const ARMode = (function() {
   /**
    * モーションセンサーの利用を要求する (iOSは明示的な許可が必要)
    */
+  function startListening() {
+    // 真北基準の絶対方位が取れる端末(主にAndroid)ではそちらを優先して登録
+    if ('ondeviceorientationabsolute' in window) {
+      window.addEventListener('deviceorientationabsolute', function(e) {
+        isAbsolute = true;
+        handleOrientation(e);
+      }, true);
+    }
+    window.addEventListener('deviceorientation', handleOrientation, true);
+  }
+
   function requestOrientationPermission() {
     return new Promise((resolve, reject) => {
       if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -59,7 +73,7 @@ const ARMode = (function() {
         DeviceOrientationEvent.requestPermission()
           .then((state) => {
             if (state === 'granted') {
-              window.addEventListener('deviceorientation', handleOrientation, true);
+              startListening();
               resolve();
             } else {
               reject(new Error('センサーの利用が許可されませんでした'));
@@ -68,7 +82,7 @@ const ARMode = (function() {
           .catch(reject);
       } else {
         // iOS以外は許可プロンプト不要でそのまま使える
-        window.addEventListener('deviceorientation', handleOrientation, true);
+        startListening();
         resolve();
       }
     });
@@ -113,11 +127,11 @@ const ARMode = (function() {
   }
 
   /**
-   * 通過軌跡の中で、いま向けている方向(currentHeading/currentPitch)に
+   * 通過軌跡の中で、いまカメラが向いている方向(cam.forward)に
    * もっとも近い点を探す
    */
   function findNearestTrackPoint(passTrack) {
-    const forward = toVector(currentHeading, currentPitch);
+    const forward = cam.forward;
     let best = null, bestDot = -Infinity;
     for (let i = 0; i < passTrack.length; i++) {
       const v = toVector(passTrack[i].azimuth, passTrack[i].elevation);
@@ -130,26 +144,57 @@ const ARMode = (function() {
   }
 
   /**
-   * 方位角・仰角 → 現在のカメラの向きを基準にした透視投影
-   * (ピンホールカメラモデル。天頂付近でも破綻しない)
+   * デバイスの姿勢(alpha/beta/gamma)＋画面の向き → カメラの前方/右/上ベクトル(ENU世界座標)
+   * 生のオイラー角から回転行列を組み、背面カメラの実際の向きを正確に求める。
+   * gamma(端末の傾き)も反映されるため、端末を傾けても軌道は空に貼り付いたまま、
+   * 天頂付近でも破綻しない。
+   */
+  function computeCameraBasis() {
+    const d2r = Math.PI / 180;
+    const a = orient.alpha * d2r, b = orient.beta * d2r, g = orient.gamma * d2r;
+    const cX = Math.cos(b), sX = Math.sin(b);
+    const cY = Math.cos(g), sY = Math.sin(g);
+    const cZ = Math.cos(a), sZ = Math.sin(a);
+    // W3C DeviceOrientation の回転行列(ZXY順)。デバイス座標→世界座標(x=東, y=北, z=上)
+    const R11 = cZ*cY - sZ*sX*sY, R12 = -cX*sZ, R13 = cZ*sY + cY*sZ*sX;
+    const R21 = cY*sZ + cZ*sX*sY, R22 = cZ*cX,  R23 = sZ*sY - cZ*cY*sX;
+    const R31 = -cX*sY,           R32 = sX,      R33 = cX*cY;
+    const mul = (vx, vy, vz) => ({
+      x: R11*vx + R12*vy + R13*vz,
+      y: R21*vx + R22*vy + R23*vz,
+      z: R31*vx + R32*vy + R33*vz
+    });
+
+    // 画面の回転(縦持ち/横持ち)を反映した「画面右/画面上」ベクトル(デバイス座標)
+    const sAng = ((screen.orientation && typeof screen.orientation.angle === 'number')
+      ? screen.orientation.angle : (window.orientation || 0)) * d2r;
+    const ca = Math.cos(sAng), sa = Math.sin(sAng);
+
+    // 背面カメラの前方 = デバイス -Z。画面右/上は画面回転を反映してデバイス平面上で回す。
+    let forward = mul(0, 0, -1);
+    let right = mul(ca, sa, 0);
+    let up = mul(-sa, ca, 0);
+
+    // 真北補正: 絶対方位が無く(iOS等)compassHeadingがある場合、ヨーを実測方位に合わせる
+    if (!isAbsolute && compassHeading !== null) {
+      const azRaw = Math.atan2(forward.x, forward.y) * 180 / Math.PI;
+      const yawErr = (compassHeading - azRaw) * d2r;
+      const c = Math.cos(yawErr), s = Math.sin(yawErr);
+      const rotZ = (v) => ({ x: c*v.x + s*v.y, y: -s*v.x + c*v.y, z: v.z });
+      forward = rotZ(forward); right = rotZ(right); up = rotZ(up);
+    }
+    return { forward: normalize(forward), right: normalize(right), up: normalize(up) };
+  }
+
+  /**
+   * 方位角・仰角 → 画面座標への透視投影 (ピンホールカメラモデル)
+   * カメラの実姿勢(cam)を基準にするので、端末を動かすと軌道は空に貼り付いたまま逆方向へ流れる。
    */
   function project(az, el, w, h) {
     const target = toVector(az, el);
-    const forward = toVector(currentHeading, currentPitch);
-    const worldUp = { x: 0, y: 0, z: 1 };
-
-    let right = normalize(cross(forward, worldUp));
-    if (right.x === 0 && right.y === 0 && right.z === 0) {
-      // forwardがほぼ真上/真下向きだとworldUpと平行になり破綻するため、
-      // その場合はコンパス方位から直接「右」ベクトルを作る
-      const hRad = currentHeading * Math.PI / 180;
-      right = { x: Math.cos(hRad), y: -Math.sin(hRad), z: 0 };
-    }
-    const up = cross(right, forward);
-
-    const fwdComp = dot(target, forward);
-    const rightComp = dot(target, right);
-    const upComp = dot(target, up);
+    const fwdComp = dot(target, cam.forward);
+    const rightComp = dot(target, cam.right);
+    const upComp = dot(target, cam.up);
 
     const focalPx = (w / 2) / Math.tan((ASSUMED_FOV_H * Math.PI / 180) / 2);
     const angleFromCenterDeg = Math.acos(Math.max(-1, Math.min(1, fwdComp))) * 180 / Math.PI;
@@ -185,6 +230,9 @@ const ARMode = (function() {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+
+    // カメラの実姿勢を毎フレーム更新 (以降の project() が参照する)
+    cam = computeCameraBasis();
 
     if (!hasObserverCoords) {
       els.guideText.textContent = '📍 位置情報を取得できていません';
